@@ -51,8 +51,7 @@ class TestJit(TestCase):
     maxDiff = None
 
     @contextmanager
-    def assertCompiled(self, fn):
-        compiled_fn = fn.compiled_fn
+    def assertCompiled(self, compiled_fn):
         self.assertIsInstance(compiled_fn, torch._C.CompiledFunction)
         hits, misses = compiled_fn.hits, compiled_fn.misses
         yield
@@ -770,6 +769,32 @@ class TestJit(TestCase):
         with self.assertCompiled(model):
             z, _ = model(x, y)
         z.sum().backward()
+
+    def test_module_cast(self):
+        """Compiled modules can be casted to other data types"""
+        @torch.jit.compile(nderivs=0)
+        class Adder(nn.Module):
+            def __init__(self):
+                super(Adder, self).__init__()
+                self.y = nn.Parameter(torch.randn(2, 2))
+
+            def forward(self, x):
+                return x + self.y
+
+        x = Variable(torch.randn(2, 2))
+        a = Adder()
+
+        def check_type(caster):
+            caster(a)
+            a(caster(x))
+            with self.assertCompiled(a):
+                a(caster(x))
+
+        check_type(lambda x: x)
+        check_type(lambda x: x.double())
+        if torch.cuda.is_available():
+            check_type(lambda x: x.float().cuda())
+            check_type(lambda x: x.double().cpu())
 
     # Tracer fails when it receives the same grad variable as multiple input to
     # traced region. The problem is that it's not immediately obvious how to
